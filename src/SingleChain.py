@@ -162,6 +162,10 @@ class SingleChain(object):
                 continue
 
             if target_noise_corr == 0:
+                if target.obsdata.y_err is not None:
+                    # diagonals of covariance matrix scaled by relative error
+                    target.get_covariance = target.valuation.get_covariance_nocorr_relative_error
+                    continue
                 # diagonal for each target, corr inrelevant for likelihood
                 target.get_covariance = target.valuation.get_covariance_nocorr
                 continue

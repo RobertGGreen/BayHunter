@@ -15,16 +15,22 @@ logger = logging.getLogger()
 
 class ObservedData(object):
     """
-    The observed data object only consists of x and y.
+    The observed data object consists of x and y
+    and y_err which is set to None if not
+    specified when initiating the target object
 
     x = continuous and monotone increasing vector
     y = y(x)
+    y_err = vector of same shape as x and y.
 
     """
-    def __init__(self, x, y):
+    def __init__(self, x, y, y_err):
         self.x = x
         self.y = y
-
+        self.y_err = y_err
+        if self.y_err is not None and np.any(self.y_err<=0.):
+            self.y_err = None
+        
 
 class ModeledData(object):
     """
@@ -99,16 +105,32 @@ class Valuation(object):
         return rms
 
     @staticmethod
-    def get_covariance_nocorr(sigma, size, corr=0):
+    def get_covariance_nocorr(sigma, obs, corr=0):
         """Return inverse and log-determinant of covariance matrix
         for a correlation (corr) of 0.
 
         If there is no correlation between data points, the correlation matrix
         is represented by the diagonal.
         """
+        size = obs.y.size
         c_inv = np.diag(np.ones(size)) / (sigma**2)
         logc_det = (2*size) * np.log(sigma)
         return c_inv, logc_det
+
+    def get_covariance_nocorr_relative_error(self, sigma, obs, corr=0):
+        """Return inverse and log-determinant of covariance matrix
+        for a correlation (corr) of 0 where target y_err is provided.
+
+        If there is no correlation between data points, the correlation matrix
+        is represented by the diagonal. Diagonal values are scaled 
+        relative to the error values in y_err
+        """
+        size = obs.y.size
+        err_scaled=obs.y_err/np.min(obs.y_err)
+        c_inv = np.diag(np.ones(len(obs.y_err))) * 1./(err_scaled * (sigma**2))
+        logc_det = (2*size) * np.log(sigma) + np.log(np.product(err_scaled)) 
+        return c_inv, logc_det
+
 
     @staticmethod
     def get_corr_inv(corr, size):
@@ -118,18 +140,20 @@ class Valuation(object):
         corr_inv = np.diag(d) + np.diag(e, k=1) + np.diag(e, k=-1)
         return corr_inv
 
-    def get_covariance_exp(self, corr, sigma, size):
+    def get_covariance_exp(self, corr, sigma, obs):
         """Return inverse and log-determinant of covariance matrix
         for a correlation (corr) not equaling 0.
 
         The correlation between data points is represented by an EXPONENTIAL law.
         """
+        size = obs.y.size
         c_inv = self.get_corr_inv(corr, size) / (sigma**2 * (1-corr**2))
         logc_det = (2*size) * np.log(sigma) + (size-1) * np.log(1-corr**2)
 
         return c_inv, logc_det
 
-    def init_covariance_gauss(self, corr, size, rcond=None):
+    def init_covariance_gauss(self, corr, obs, rcond=None):
+        size = obs.y.size
         idx = np.fromfunction(lambda i, j: (abs((i+j) - 2*i)),
                               (size, size))
         rmatrix = corr**(idx**2)
@@ -141,7 +165,7 @@ class Valuation(object):
         _, logdet = np.linalg.slogdet(rmatrix)
         self.logcorr_det = logdet
 
-    def get_covariance_gauss(self, sigma, size, corr=None):
+    def get_covariance_gauss(self, sigma, obs, corr=None):
         """Return inverse and log-determinant of covariance matrix
         for a correlation (corr) not equaling 0.
 
@@ -150,6 +174,7 @@ class Valuation(object):
         to compute RF. In this case, the inverse and log-determinant of the
         correlation matrix R is computed only once when initiating the chains.
         """
+        size = obs.y.size
         c_inv = self.corr_inv / (sigma**2)
         logc_det = (2*size) * np.log(sigma) + self.logcorr_det
         return c_inv, logc_det
@@ -171,9 +196,9 @@ class SingleTarget(object):
     likelihood, and also a plotting method. These can be used when initiating
     and testing your targets.
     """
-    def __init__(self, x, y, ref):
+    def __init__(self, x, y, ref, y_err=None):
         self.ref = ref
-        self.obsdata = ObservedData(x=x, y=y)
+        self.obsdata = ObservedData(x=x, y=y, y_err=y_err)
         self.moddata = ModeledData(obsx=x, ref=ref)
         self.valuation = Valuation()
 
@@ -215,8 +240,9 @@ class SingleTarget(object):
         if ax is None:
             fig, ax = plt.subplots()
 
-        ax.plot(self.obsdata.x, self.obsdata.y, label='obs',
-                marker='x', ms=1, color='blue', lw=0.8, zorder=1000)
+        ax.errorbar(self.obsdata.x, self.obsdata.y, yerr=self.obsdata.y_err,
+                    label='obs', marker='x', ms=1, color='blue', lw=0.8, 
+                    zorder=1000)
         if mod:
             ax.plot(self.moddata.x, self.moddata.y, label='mod',
                     marker='o',  ms=1, color='red', lw=0.7, alpha=0.5)
@@ -230,33 +256,33 @@ class SingleTarget(object):
 class RayleighDispersionPhase(SingleTarget):
     noiseref = 'swd'
 
-    def __init__(self, x, y):
+    def __init__(self, x, y, y_err=None):
         ref = 'rdispph'
-        SingleTarget.__init__(self, x, y, ref)
+        SingleTarget.__init__(self, x, y, ref, y_err)
 
 
 class RayleighDispersionGroup(SingleTarget):
     noiseref = 'swd'
 
-    def __init__(self, x, y):
+    def __init__(self, x, y, y_err=None):
         ref = 'rdispgr'
-        SingleTarget.__init__(self, x, y, ref)
+        SingleTarget.__init__(self, x, y, ref, y_err)
 
 
 class LoveDispersionPhase(SingleTarget):
     noiseref = 'swd'
 
-    def __init__(self, x, y):
+    def __init__(self, x, y, y_err=None):
         ref = 'ldispph'
-        SingleTarget.__init__(self, x, y, ref)
+        SingleTarget.__init__(self, x, y, ref, y_err)
 
 
 class LoveDispersionGroup(SingleTarget):
     noiseref = 'swd'
 
-    def __init__(self, x, y):
+    def __init__(self, x, y, y_err=None):
         ref = 'ldispgr'
-        SingleTarget.__init__(self, x, y, ref)
+        SingleTarget.__init__(self, x, y, ref, y_err)
 
 
 class PReceiverFunction(SingleTarget):
@@ -310,8 +336,8 @@ class JointTarget(object):
             size = target.obsdata.y.size
 
             corr, sigma = noise[2*n:2*n+2]
-            c_inv, logc_det = target.get_covariance(
-                sigma=sigma, size=size, corr=corr)
+            c_inv, logc_det = target.get_covariance(sigma=sigma, corr=corr,
+                                                    obs=target.obsdata)
 
             ydiff = target.moddata.y - target.obsdata.y
             madist = (ydiff.T).dot(c_inv).dot(ydiff)
